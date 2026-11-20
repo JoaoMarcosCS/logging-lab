@@ -5,46 +5,59 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.26.2",
   "type": "module",
   "scripts": {
     "build": "nest build",
     "deploy": "nest deploy",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "oxlint --type-aware src/ test/",
+    "lint": "oxlint --type-aware src/",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "prepare": "cd .. && husky",
+    "migration:generate": "sh -c 'node --import tsx ./node_modules/typeorm/cli.js migration:generate -d src/infra/database/data-source.ts src/infra/database/migrations/$0'",
+    "migration:run": "node --import tsx ./node_modules/typeorm/cli.js migration:run -d src/infra/database/data-source.ts",
+    "migration:revert": "node --import tsx ./node_modules/typeorm/cli.js migration:revert -d src/infra/database/data-source.ts",
+    "seed": "node --import tsx src/infra/database/seeds/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",
-    "@nestjs/config": "^12.1.1",
     "@nestjs/core": "^12.0.1",
+    "@nestjs/jwt": "^12.0.5",
     "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/throttler": "^6.7.1",
     "@nestjs/typeorm": "^12.0.3",
-    "dotenv": "^18.0.10",
-    "nestjs-zod": "^5.6.0",
+    "bcryptjs": "^3.0.3",
     "pg": "^8.23.1",
+    "redis": "^6.3.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^1.1.3",
+    "uuid": "^14.0.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@faker-js/faker": "^10.6.0",
     "@nestjs/cli": "^12.0.0",
     "@nestjs/mau": "^0.2.6",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
+    "@testcontainers/postgresql": "^12.2.1",
+    "@testcontainers/redis": "^12.2.1",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
     "prettier": "^3.4.2",
@@ -54,5 +67,11 @@
     "typescript": "^6.0.2",
     "vite": "^8.0.0",
     "vitest": "^4.1.2"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "oxlint --type-aware --fix",
+      "prettier --write"
+    ]
   }
 }
