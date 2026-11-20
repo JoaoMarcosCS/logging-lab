@@ -1,0 +1,91 @@
+x-backend: &backend
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+    args:
+      API_PORT: ${API_PORT}
+      NODE_VERSION: ${NODE_VERSION}
+
+  image: task-flow-base-backend
+
+  restart: unless-stopped
+
+  init: true
+
+  env_file:
+    - backend/.env
+
+  environment:
+    DB_HOST: postgres
+    DB_PORT: 5432
+    REDIS_HOST: redis
+    REDIS_PORT: 6379
+
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+
+    ports:
+      - "127.0.0.1:${DB_PORT}:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:${REDIS_PORT}:6379"
+
+    volumes:
+      - redisdata:/data
+
+    command: ["redis-server", "--appendonly", "yes"]
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  apply-migrations:
+    <<: *backend
+    restart: "no"
+    command: ["node", "./node_modules/typeorm/cli.js", "migration:run", "-d", "dist/infra/database/data-source.js"]
+
+  api:
+    <<: *backend
+
+    ports:
+      - "127.0.0.1:${API_PORT}:${API_PORT}"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      apply-migrations:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  redisdata:
