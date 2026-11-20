@@ -1,0 +1,14 @@
+process.env.API_PORT = '3333';
+process.env.NODE_VERSION = '24';
+process.env.ENVIRONMENT = 'test';
+process.env.DB_HOST = 'localhost';
+process.env.DB_PORT = '5432';
+process.env.DB_USER = 'test_user';
+process.env.DB_PASS = 'test_pass';
+process.env.DB_NAME = 'test_db';
+process.env.REDIS_HOST = 'localhost';
+process.env.REDIS_PORT = '6379';
+process.env.JWT_ACCESS_SECRET = 'test-access-secret-with-at-least-32-chars';
+process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-with-at-least-32-chars';
+process.env.JWT_ACCESS_TTL = '900';
+process.env.JWT_REFRESH_TTL = '86400';
