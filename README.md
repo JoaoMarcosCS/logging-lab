@@ -1,132 +1,84 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Task Flow Base
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Projeto base para estudos. Ele entrega um sistema completo e funcionando (API, frontend, banco, cache, autenticação e dados de exemplo) para servir de ponto de partida a outros projetos, sem precisar montar tudo do zero a cada novo estudo.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+A ideia é clonar esta base e evoluir em cima dela.
 
-## Description
+Tudo o que está aqui pode ser modificado: módulos, regras de negócio, estrutura do banco e entidades. A base existe para poupar o trabalho repetitivo, não para limitar o que vem depois.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## O que já vem pronto
 
-## Project setup
+O domínio é um gerenciador de tarefas pessoal: cada usuário organiza as próprias tarefas em boards que só ele enxerga. O glossário completo está em [CONTEXT.md](CONTEXT.md).
 
-```bash
-$ pnpm install
-```
+Backend (`backend/`):
 
-## Compile and run the project
+- NestJS com ESM, TypeORM e PostgreSQL;
+- autenticação com JWT em cookies httpOnly, sessões no Redis, rotação do refresh token e detecção de reuso (decisão registrada em [docs/adr/0001-sessoes-jwt-no-redis.md](docs/adr/0001-sessoes-jwt-no-redis.md));
+- módulos de usuários, boards e tarefas, com um use case por pasta (controller, schema, usecase e teste);
+- validação com zod, rate limit com `@nestjs/throttler`, CORS restrito e versionamento de rotas (`/api/v1`);
+- cache no Redis com invalidação por prefixo;
+- paginação por cursor e ids UUIDv7;
+- exclusão lógica: excluir um board exclui as tarefas dele na mesma transação;
+- testes unitários com Vitest e testes de integração com testcontainers;
+- seed com um usuário principal, 200 usuários extras, boards e tarefas variados, incluindo um board com 5000 tarefas.
 
-```bash
-# development
-$ pnpm run start
+Frontend (`frontend/`):
 
-# watch mode
-$ pnpm run start:dev
+- Next.js com React, TanStack Query, Zustand, react-hook-form, zod e Tailwind;
+- telas de login, cadastro, boards, quadro de tarefas com arrastar e soltar, e perfil.
 
-# production mode
-$ pnpm run start:prod
-```
+Infraestrutura (raiz):
 
-## Run tests
+- `docker-compose.yml` com PostgreSQL, Redis, serviço de migrations e a API;
+- `Makefile` com os fluxos do dia a dia;
+- hooks do husky: lint e formatação no pre-commit, testes no pre-push.
 
-```bash
-# unit tests
-$ pnpm run test
+## Estrutura do banco
 
-# e2e tests
-$ pnpm run test:e2e
+| Tabela | Colunas principais | Relação |
+| --- | --- | --- |
+| `users` | `id`, `name`, `email`, `password`, `status` (ativo ou inativo) | dono de zero ou mais boards |
+| `boards` | `id`, `user_id`, `title`, `description`, `is_active` | pertence a um usuário, contém zero ou mais tarefas |
+| `tasks` | `id`, `board_id`, `title`, `description`, `priority`, `work_status`, `is_active` | pertence a exatamente um board |
 
-# test coverage
-$ pnpm run test:cov
-```
+Todas as tabelas têm `created_at` e `updated_at`. A tarefa não tem dono próprio: o dono dela é o dono do board.
 
-## Deployment
+## Como rodar
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Requisitos: Docker, Node na versão do `.nvmrc` (via nvm) e pnpm (via corepack).
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+1. Crie o `backend/.env` com as variáveis validadas em `backend/src/shared/environment/env.ts`: `API_PORT`, `NODE_VERSION`, `ENVIRONMENT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`, `REDIS_HOST`, `REDIS_PORT`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_TTL` e `JWT_REFRESH_TTL`.
+2. Instale as dependências do backend com `cd backend && pnpm install`.
+3. Na raiz, rode `make dev` para subir tudo e abrir o frontend, ou `make up` para subir só a API e acompanhar os logs.
 
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
+O `make up` sobe Postgres e Redis, aplica as migrations, sobe a API e roda o seed. O `make dev` faz o mesmo e depois inicia o frontend em `http://localhost:5173`, criando o `frontend/.env.local` a partir do `.env.example` se ele não existir.
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Usuário de demonstração criado pelo seed: `teste@gmail.com`, senha `#Demo2026`.
 
-## Observability
+Outros comandos:
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+| Comando | O que faz |
+| --- | --- |
+| `make infra` | sobe Postgres e Redis |
+| `make migrate` | aplica as migrations pendentes |
+| `make seed` | aplica as migrations e roda o seed (não faz nada se o usuário principal já existir) |
+| `make migration-generate name=Nome` | gera uma migration a partir das entidades |
+| `make migration-revert` | reverte a última migration |
+| `make db-reset` | apaga os volumes e recria o banco com o seed |
+| `make down` | derruba os containers |
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
+Testes, dentro de `backend/`:
 
 ```bash
-$ npx @nestjs/observe link
+pnpm test
+pnpm test:integration
 ```
 
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
+Os testes de integração precisam do Docker rodando.
 
-Or do it by hand:
+## Documentação
 
-```bash
-$ pnpm install @nestjs/observe
-```
-
-Then follow the [setup guide](https://docs.nestjs.com/observability/sdk) - it takes a single import and an app key.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- [CONTEXT.md](CONTEXT.md): glossário do domínio e relações entre as entidades.
+- [docs/api-frontend.md](docs/api-frontend.md): contrato da API (rotas, tipos, autenticação, refresh, rate limit e CORS).
+- [docs/adr/](docs/adr/): decisões de arquitetura.
+- [CLAUDE.md](CLAUDE.md): convenções de código do backend (estrutura de módulos, repositories, schemas e testes).
