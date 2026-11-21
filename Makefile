@@ -2,9 +2,19 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
 NODE := cd backend && source $${NVM_DIR:-$$HOME/.nvm}/nvm.sh >/dev/null && nvm use >/dev/null &&
+FRONT := cd frontend && source $${NVM_DIR:-$$HOME/.nvm}/nvm.sh >/dev/null && nvm use >/dev/null &&
 COMPOSE := docker compose --env-file backend/.env
 
-.PHONY: up infra migrate seed api logs down db-reset migration-generate migration-revert
+.PHONY: dev front up infra migrate seed api logs down db-reset migration-generate migration-revert
+
+dev: api
+	$(NODE) pnpm seed
+	@$(MAKE) --no-print-directory front
+
+front:
+	@test -f frontend/.env.local || cp frontend/.env.example frontend/.env.local
+	@test -d frontend/node_modules || ($(FRONT) pnpm install)
+	$(FRONT) pnpm dev
 
 up: api
 	$(NODE) pnpm seed
