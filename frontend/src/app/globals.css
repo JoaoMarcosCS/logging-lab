@@ -1,0 +1,183 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-night: #0a1211;
+  --color-fg: #0a1211;
+  --color-fg-2: #36413f;
+  --color-fg-3: #5d6a68;
+  --color-fg-4: #9aa5a3;
+  --color-surface: #ffffff;
+  --color-mist: #f2f8f7;
+  --color-line-soft: rgb(8 30 28 / 0.07);
+  --color-line: rgb(8 30 28 / 0.11);
+  --color-line-strong: rgb(8 30 28 / 0.2);
+
+  --color-tiffany: #81d8d0;
+  --color-tiffany-soft: #d9f8f4;
+  --color-tiffany-mist: #c4f1eb;
+  --color-tiffany-mid: #55c4b9;
+  --color-tiffany-glow: #4fe6d9;
+  --color-tiffany-ink: #0b7068;
+  --color-tiffany-deep: #0c4a45;
+
+  --color-ok: #0a7d47;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdeeec;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --animate-fade-up: fade-up 0.5s var(--ease-out-soft) both;
+  --animate-pop: pop 0.36s var(--ease-spring) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@keyframes cta-shine {
+  0%,
+  62% {
+    transform: translateX(-130%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(300%) skewX(-18deg);
+  }
+}
+
+@utility text-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-fg-3);
+}
+
+@utility glass-clear {
+  background-image: linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0.72) 0%,
+    rgb(255 255 255 / 0.5) 55%,
+    rgb(255 255 255 / 0.62) 100%
+  );
+  border: 0.8px solid rgb(255 255 255 / 0.7);
+  box-shadow:
+    inset 0 1.5px 1px rgb(255 255 255 / 0.95),
+    inset 0 -1px 1px rgb(255 255 255 / 0.5),
+    inset 0 0 18px rgb(255 255 255 / 0.4),
+    0 14px 36px -16px rgb(10 60 56 / 0.4);
+  backdrop-filter: blur(18px) saturate(1.6);
+}
+
+@utility card-tiffany {
+  background-image:
+    radial-gradient(90% 80% at 12% 0, rgb(255 255 255 / 0.75) 0%, transparent 55%),
+    linear-gradient(150deg, #c4f1eb 0%, #81d8d0 48%, #4fc2b6 100%);
+  border: 0.8px solid rgb(255 255 255 / 0.75);
+  box-shadow:
+    inset 0 1.5px 0 rgb(255 255 255 / 0.85),
+    0 30px 60px -30px rgb(20 140 128 / 0.65);
+}
+
+@utility cta-fill {
+  color: var(--color-night);
+  background-image: linear-gradient(180deg, #d9f8f4 0%, #81d8d0 52%, #55c4b9 100%);
+  box-shadow:
+    inset 0 1.5px 0 rgb(255 255 255 / 0.9),
+    inset 0 -2px 4px rgb(11 112 104 / 0.18),
+    0 12px 28px -12px rgb(20 140 128 / 0.65);
+}
+
+@utility cta-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -20% auto -20% 0;
+    z-index: -1;
+    width: 34%;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.9), transparent);
+    transform: translateX(-130%) skewX(-18deg);
+    animation: cta-shine 4.2s var(--ease-out-soft) infinite;
+  }
+}
+
+@utility night-glow {
+  background-color: var(--color-night);
+  background-image:
+    radial-gradient(
+      70% 55% at 50% 112%,
+      rgb(79 230 217 / 0.55),
+      rgb(129 216 208 / 0.16) 45%,
+      transparent 72%
+    ),
+    radial-gradient(
+      60% 55% at 30% 0,
+      rgb(129 216 208 / 0.14),
+      rgb(129 216 208 / 0.05) 45%,
+      transparent 72%
+    );
+}
+
+@utility app-canvas {
+  background-color: var(--color-surface);
+  background-image: radial-gradient(
+    80% 420px at 50% 0,
+    rgb(129 216 208 / 0.32),
+    rgb(129 216 208 / 0.1) 45%,
+    transparent 75%
+  );
+  background-repeat: no-repeat;
+}
+
+html {
+  color-scheme: light;
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-fg);
+}
+
+::selection {
+  background-color: var(--color-tiffany);
+  color: var(--color-night);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
