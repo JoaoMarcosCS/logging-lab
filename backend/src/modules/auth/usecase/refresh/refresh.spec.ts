@@ -2,12 +2,15 @@ import { UnauthorizedException } from '@nestjs/common';
 import { RefreshUseCase } from './refresh.usecase.js';
 import type { TokenService } from '../../token/token.service.js';
 import type { ISessionRepository } from '../../../sessions/repository/session-interface.repository.js';
+import type { PinoLogger } from 'nestjs-pino';
 import {
+  mockLogger,
   mockSessionRepository,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
 import type {
   Mocked,
+  MockedLogger,
   MockedTokenService,
 } from '../../../../tests/mocks/index.js';
 import { env } from '../../../../shared/environment/env.js';
@@ -22,6 +25,7 @@ const session = {
 describe('RefreshUseCase', () => {
   let sessionRepository: Mocked<ISessionRepository>;
   let tokenService: MockedTokenService;
+  let logger: MockedLogger;
   let useCase: RefreshUseCase;
 
   beforeEach(() => {
@@ -35,9 +39,11 @@ describe('RefreshUseCase', () => {
         jti: session.refreshTokenId,
       }),
     };
+    logger = mockLogger();
     useCase = new RefreshUseCase(
       sessionRepository,
       tokenService as unknown as TokenService,
+      logger as unknown as PinoLogger,
     );
   });
 
@@ -70,6 +76,14 @@ describe('RefreshUseCase', () => {
       session.sessionId,
     );
     expect(sessionRepository.save).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'auth.refresh.reuse_detected',
+        userId: USER_ID,
+        sessionId: session.sessionId,
+      }),
+      expect.any(String),
+    );
   });
 
   it('throws 401 when the session no longer exists', async () => {

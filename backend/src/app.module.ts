@@ -1,5 +1,5 @@
 import { Module, StandardSchemaValidationPipe } from '@nestjs/common';
-import { APP_GUARD, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
@@ -13,6 +13,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { BoardsModule } from './modules/boards/boards.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
 import { LoggerModule } from './infra/logger/logger.module.js';
+import { HttpExceptionFilter } from './infra/http/filters/http-exception.filter.js';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { LoggerModule } from './infra/logger/logger.module.js';
   controllers: [AppController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_FILTER, useClass: HttpExceptionFilter },
     {
       provide: APP_PIPE,
       useValue: new StandardSchemaValidationPipe(),

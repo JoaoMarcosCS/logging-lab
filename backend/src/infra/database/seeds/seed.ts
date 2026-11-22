@@ -101,6 +101,8 @@ type BoardPlan = {
 
 const now = new Date();
 
+// O seed roda fora do Nest, então usa o pino direto com a mesma configuração da API.
+// child() cria um logger que acrescenta component: 'seed' em todas as linhas.
 const logger = pino(loggerConfig).child({ component: 'seed' });
 
 const daysAgo = (days: number) => new Date(now.getTime() - days * DAY_MS);
@@ -328,6 +330,7 @@ const run = async () => {
   }
 };
 
+// exitCode em vez de process.exit(): deixa o pino esvaziar o buffer antes de o processo sair.
 await run().catch((err: unknown) => {
   logger.fatal({ err }, 'seed failed');
   process.exitCode = 1;

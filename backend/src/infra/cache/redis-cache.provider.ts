@@ -26,6 +26,9 @@ export class RedisCacheProvider
     },
   });
 
+  // As chamadas usam um objeto { msg, ...campos }: a mensagem é fixa e os dados variáveis
+  // (key, prefix, err) ficam em campos próprios. Passar o erro como segundo argumento
+  // (logger.error('texto', err)) faria o pino tratá-lo como contexto e descartá-lo.
   onModuleInit() {
     this.client.on('error', (err) =>
       this.logger.error({ msg: 'redis connection error', err }),

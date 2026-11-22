@@ -82,3 +82,25 @@ export const makeTask = (overrides: Partial<PublicTask> = {}): PublicTask => ({
 export type MockedTokenService = {
   [K in keyof TokenService]: Mock<TokenService[K]>;
 };
+
+export type MockedLogger = {
+  setContext: Mock;
+  assign: Mock;
+  trace: Mock;
+  debug: Mock;
+  info: Mock;
+  warn: Mock;
+  error: Mock;
+  fatal: Mock;
+};
+
+export const mockLogger = (): MockedLogger => ({
+  setContext: vi.fn(),
+  assign: vi.fn(),
+  trace: vi.fn(),
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  fatal: vi.fn(),
+});

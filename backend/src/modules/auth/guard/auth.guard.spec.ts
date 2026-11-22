@@ -4,8 +4,17 @@ import type { Reflector } from '@nestjs/core';
 import { AuthGuard } from './auth.guard.js';
 import type { TokenService } from '../token/token.service.js';
 import type { ISessionRepository } from '../../sessions/repository/session-interface.repository.js';
-import { mockSessionRepository, USER_ID } from '../../../tests/mocks/index.js';
-import type { Mocked, MockedTokenService } from '../../../tests/mocks/index.js';
+import type { PinoLogger } from 'nestjs-pino';
+import {
+  mockLogger,
+  mockSessionRepository,
+  USER_ID,
+} from '../../../tests/mocks/index.js';
+import type {
+  Mocked,
+  MockedLogger,
+  MockedTokenService,
+} from '../../../tests/mocks/index.js';
 
 const makeContext = (request: Record<string, any>) =>
   ({
@@ -18,6 +27,7 @@ describe('AuthGuard', () => {
   let reflector: { getAllAndOverride: ReturnType<typeof vi.fn> };
   let tokenService: MockedTokenService;
   let sessionRepository: Mocked<ISessionRepository>;
+  let logger: MockedLogger;
   let guard: AuthGuard;
 
   beforeEach(() => {
@@ -30,10 +40,12 @@ describe('AuthGuard', () => {
       verifyRefreshToken: vi.fn(),
     };
     sessionRepository = mockSessionRepository();
+    logger = mockLogger();
     guard = new AuthGuard(
       reflector as unknown as Reflector,
       tokenService as unknown as TokenService,
       sessionRepository,
+      logger as unknown as PinoLogger,
     );
   });
 
@@ -60,6 +72,10 @@ describe('AuthGuard', () => {
     expect(tokenService.verifyAccessToken).toHaveBeenCalledWith('token');
     expect(sessionRepository.find).toHaveBeenCalledWith(USER_ID, 'session-1');
     expect(request.user).toEqual({ id: USER_ID, sessionId: 'session-1' });
+    expect(logger.assign).toHaveBeenCalledWith({
+      userId: USER_ID,
+      sessionId: 'session-1',
+    });
   });
 
   it('rejects when the cookie is missing', async () => {

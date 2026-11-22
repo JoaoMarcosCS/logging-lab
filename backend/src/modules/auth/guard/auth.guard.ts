@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { PinoLogger } from 'nestjs-pino';
 import { getRequestCookie } from '@nestjs/core/helpers/cookies/request-cookies.js';
 import { TokenService } from '../token/token.service.js';
 import { ISessionRepository } from '../../sessions/repository/session-interface.repository.js';
@@ -15,6 +16,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly tokenService: TokenService,
     private readonly sessionRepository: ISessionRepository,
+    private readonly logger: PinoLogger,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -46,6 +48,10 @@ export class AuthGuard implements CanActivate {
     }
 
     request.user = { id: payload.sub, sessionId: payload.sid };
+    // Grava userId e sessionId no contexto da requisição (AsyncLocalStorage).
+    // Todo log emitido daqui em diante nesta requisição, inclusive o access log,
+    // sai com esses campos, mesmo em classes que não sabem quem é o usuário.
+    this.logger.assign({ userId: payload.sub, sessionId: payload.sid });
 
     return true;
   }
