@@ -28,13 +28,17 @@ export class RedisCacheProvider
 
   onModuleInit() {
     this.client.on('error', (err) =>
-      this.logger.error('connection error', err),
+      this.logger.error({ msg: 'redis connection error', err }),
     );
-    this.client.on('reconnecting', () => this.logger.warn('reconnecting'));
-    this.client.on('ready', () => this.logger.log('connection established'));
+    this.client.on('reconnecting', () =>
+      this.logger.warn('redis reconnecting'),
+    );
+    this.client.on('ready', () =>
+      this.logger.log('redis connection established'),
+    );
     this.client
       .connect()
-      .catch((err) => this.logger.error('failed to connect', err));
+      .catch((err) => this.logger.error({ msg: 'redis connect failed', err }));
   }
 
   async onApplicationShutdown() {
@@ -54,7 +58,7 @@ export class RedisCacheProvider
       const raw = await this.client.get(key);
       return raw === null ? null : (JSON.parse(raw) as T);
     } catch (err) {
-      this.logger.error(`get ${key}`, err);
+      this.logger.error({ msg: 'cache get failed', key, err });
       return null;
     }
   }
@@ -66,7 +70,7 @@ export class RedisCacheProvider
       const raw = await this.client.getDel(key);
       return raw === null ? null : (JSON.parse(raw) as T);
     } catch (err) {
-      this.logger.error(`getAndDelete ${key}`, err);
+      this.logger.error({ msg: 'cache getAndDelete failed', key, err });
       return null;
     }
   }
@@ -83,7 +87,7 @@ export class RedisCacheProvider
         expiration: { type: 'EX', value: ttlSeconds },
       });
     } catch (err) {
-      this.logger.error(`set ${key}`, err);
+      this.logger.error({ msg: 'cache set failed', key, err });
     }
   }
 
@@ -92,7 +96,7 @@ export class RedisCacheProvider
     try {
       await this.client.del(key);
     } catch (err) {
-      this.logger.error(`invalidate ${key}`, err);
+      this.logger.error({ msg: 'cache invalidate failed', key, err });
     }
   }
 
@@ -108,7 +112,11 @@ export class RedisCacheProvider
         }
       }
     } catch (err) {
-      this.logger.error(`invalidateByPrefix ${prefix}`, err);
+      this.logger.error({
+        msg: 'cache invalidateByPrefix failed',
+        prefix,
+        err,
+      });
     }
   }
 }

@@ -15,6 +15,8 @@ import { TaskEntity } from '../../../modules/tasks/entity/task.entity.js';
 import { EStatusUser } from '../../../shared/enums/users/user-status.enum.js';
 import { EPriorityTask } from '../../../shared/enums/tasks/task-priority.enum.js';
 import { EWorkStatusTask } from '../../../shared/enums/tasks/task-work-status.enum.js';
+import { loggerConfig } from '../../logger/logger.config.js';
+import { pino } from 'pino';
 
 const FAKER_SEED = 2026;
 const BATCH_SIZE = 1000;
@@ -98,6 +100,8 @@ type BoardPlan = {
 };
 
 const now = new Date();
+
+const logger = pino(loggerConfig).child({ component: 'seed' });
 
 const daysAgo = (days: number) => new Date(now.getTime() - days * DAY_MS);
 
@@ -295,7 +299,10 @@ const run = async () => {
     ).existsBy({ email: MAIN_USER.email });
 
     if (alreadySeeded) {
-      console.log(`Seed ignorado: ${MAIN_USER.email} já existe`);
+      logger.info(
+        { email: MAIN_USER.email },
+        'seed skipped: main user already exists',
+      );
       return;
     }
 
@@ -308,12 +315,20 @@ const run = async () => {
       await insertInBatches(manager, TaskEntity, data.tasks);
     });
 
-    console.log(
-      `Seed concluído: ${data.users.length} usuários, ${data.boards.length} boards, ${data.tasks.length} tarefas`,
+    logger.info(
+      {
+        users: data.users.length,
+        boards: data.boards.length,
+        tasks: data.tasks.length,
+      },
+      'seed completed',
     );
   } finally {
     await AppDataSource.destroy();
   }
 };
 
-await run();
+await run().catch((err: unknown) => {
+  logger.fatal({ err }, 'seed failed');
+  process.exitCode = 1;
+});

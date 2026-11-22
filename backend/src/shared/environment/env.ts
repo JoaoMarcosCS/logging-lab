@@ -23,6 +23,10 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL: z.coerce.number().int().positive(),
   JWT_REFRESH_TTL: z.coerce.number().int().positive(),
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .default('info'),
+  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
 });
 
 export type Env = z.infer<typeof envSchema>;

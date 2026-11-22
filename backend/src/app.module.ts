@@ -12,6 +12,7 @@ import { UsersModule } from './modules/users/users.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { BoardsModule } from './modules/boards/boards.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
+import { LoggerModule } from './infra/logger/logger.module.js';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { TasksModule } from './modules/tasks/tasks.module.js';
     AuthModule,
     BoardsModule,
     TasksModule,
+    LoggerModule,
   ],
   controllers: [AppController],
   providers: [
