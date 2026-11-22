@@ -66,7 +66,7 @@ const requestFields = (
             '*.refreshToken',
           ],
           // Texto que substitui o valor mascarado.
-          censor: '[REDACTED]',
+          censor: '*****',
         },
 
         // Define o id de cada requisição. Reaproveita o X-Request-Id de quem chamou
