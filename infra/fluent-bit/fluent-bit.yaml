@@ -1,0 +1,144 @@
+# Fluent Bit: lê os arquivos de log que o Docker grava para cada container,
+# fica só com os da API, transforma o JSON do pino em campos e envia ao Elasticsearch.
+#
+# Formato de cada linha no arquivo do Docker (driver json-file com as opções tag e labels):
+# {"log":"{\"level\":\"info\",...}\n","stream":"stdout","attrs":{"com.docker.compose.service":"api","tag":"logging-api-1"},"time":"..."}
+
+service:
+  # Intervalo, em segundos, em que os registros acumulados são enviados às saídas.
+  flush: 1
+  # Nível de log do próprio Fluent Bit (o que ele escreve no stdout dele).
+  log_level: info
+  # Servidor HTTP com métricas e saúde do Fluent Bit.
+  http_server: on
+  http_listen: 0.0.0.0
+  http_port: 2020
+  # Habilita /api/v1/health, que responde erro quando as saídas falham demais.
+  health_check: on
+  # Pasta do buffer em disco. Registros que ainda não foram aceitos pelo Elasticsearch
+  # ficam aqui; se ele cair, nada se perde, e o envio continua quando ele voltar.
+  storage.path: /fluent-bit/state/buffer
+  # Grava o buffer sem fsync a cada escrita: mais rápido, pode perder segundos numa queda de energia.
+  storage.sync: normal
+  # Memória para reprocessar, após um restart, o que ficou no buffer em disco.
+  storage.backlog.mem_limit: 5M
+
+parsers:
+  # Interpreta a linha do pino. Usado no filtro parser, sobre o campo "log".
+  - name: pino_json
+    format: json
+    # Campo do pino com o momento do evento. Vira o timestamp do registro e, no Elasticsearch,
+    # o @timestamp. Sem isso, o horário seria o de leitura do arquivo.
+    time_key: time
+    # Formato ISO 8601 que o pino grava (stdTimeFunctions.isoTime), sempre em UTC (Z).
+    time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
+    # Remove o campo "time" depois de usá-lo; o horário passa a viver só no @timestamp.
+    time_keep: off
+
+pipeline:
+  inputs:
+    # Lê arquivos como um "tail -f", lembrando a posição de cada um.
+    - name: tail
+      # Um arquivo por container: /var/lib/docker/containers/<id>/<id>-json.log.
+      # O curinga pega containers novos sozinho (inclusive a versão nova num blue/green).
+      path: /var/lib/docker/containers/*/*-json.log
+      # Tag de roteamento. O * vira o caminho do arquivo; filtros e saídas usam match "docker.*".
+      tag: docker.*
+      # Parser multilinha embutido para o formato do Docker: interpreta o JSON externo
+      # (log, stream, attrs, time) e junta linhas que o Docker quebra em pedaços de 16 KB.
+      multiline.parser: docker
+      # Banco SQLite com a posição de leitura de cada arquivo. Num restart, o Fluent Bit
+      # continua de onde parou: não reenvia o que já foi e não pula o que ficou para trás.
+      db: /fluent-bit/state/tail.db
+      # Uso exclusivo do banco pelo Fluent Bit, mais rápido.
+      db.locking: true
+      # Arquivo novo (sem posição salva) é lido desde o começo. Sem isso, as primeiras linhas
+      # de um container recém-criado (o boot da API) se perderiam até o arquivo ser descoberto.
+      read_from_head: true
+      # De quanto em quanto tempo, em segundos, procura arquivos novos que casem com o path.
+      refresh_interval: 5
+      # Depois de uma rotação (max-size), continua lendo o arquivo antigo por 30 s,
+      # para não perder linhas escritas logo antes de rotacionar.
+      rotate_wait: 30
+      # Linhas maiores que o buffer são puladas em vez de travar a leitura do arquivo.
+      skip_long_lines: on
+      # Guarda os registros lidos em disco (storage.path) antes de enviar.
+      storage.type: filesystem
+
+  filters:
+    # 1. Fica só com os containers do serviço "api" do compose. O label vem da opção
+    #    "labels" do driver json-file. Postgres, Redis, Kibana e o próprio Fluent Bit são descartados.
+    - name: grep
+      match: docker.*
+      regex: $attrs['com.docker.compose.service'] ^api$
+
+    # 2. Transforma o texto do campo "log" (a linha JSON do pino) em campos.
+    #    Se a linha não for JSON (ex.: stack trace de um crash antes do pino subir),
+    #    o registro segue com o "log" original, tratado no filtro seguinte.
+    - name: parser
+      match: docker.*
+      key_name: log
+      parser: pino_json
+      # Mantém os campos que vieram do Docker (stream, attrs) junto com os do pino.
+      reserve_data: on
+
+    # 3. Ajustes que dependem de lógica:
+    #    - container.name a partir do attrs.tag, e remove o attrs;
+    #    - remove o "time" do Docker (hora em que ele recebeu a linha); o horário do evento
+    #      já está no timestamp do registro, vindo do "time" do pino;
+    #    - linha que não era JSON vira mensagem, com nível pelo stream (stderr = error).
+    - name: lua
+      match: docker.*
+      call: normalize
+      code: |
+        function normalize(tag, timestamp, record)
+          local attrs = record["attrs"]
+          if attrs ~= nil then
+            record["container"] = { name = attrs["tag"] }
+            record["attrs"] = nil
+          end
+          record["time"] = nil
+
+          if record["msg"] == nil and record["log"] ~= nil then
+            record["msg"] = string.gsub(record["log"], "%s+$", "")
+            record["level"] = record["stream"] == "stderr" and "error" or "info"
+          end
+          record["log"] = nil
+
+          -- 1 = registro alterado (o timestamp continua o mesmo).
+          return 1, timestamp, record
+        end
+
+    # 4. Renomeia para os nomes do Elastic Common Schema (ECS), que o Kibana reconhece:
+    #    message aparece no resumo do Discover e log.level ganha cores por nível.
+    - name: modify
+      match: docker.*
+      rename:
+        - msg message
+        - level log.level
+        - stream log.stream
+
+  outputs:
+    - name: es
+      match: docker.*
+      host: elasticsearch
+      port: 9200
+      # Usuário com papel fluent-bit-writer: só cria documentos em logs-task-flow-*.
+      http_user: fluent-bit
+      # Lido da variável de ambiente do container (infra/.env).
+      http_passwd: ${FLUENT_BIT_PASSWORD}
+      # Data stream de destino (logs-<dataset>-<namespace>). Criado na primeira escrita
+      # com o mapeamento do index template.
+      index: logs-task-flow-local
+      # Data streams só aceitam "create" (inserção). O padrão "index" seria recusado.
+      write_operation: create
+      # Não envia o _type, que não existe mais no Elasticsearch 8+.
+      suppress_type_name: on
+      # Comprime o corpo do _bulk.
+      compress: gzip
+      # Mostra no log do Fluent Bit o motivo de cada documento recusado (ex.: erro de mapeamento).
+      trace_error: on
+      # Tenta reenviar sem limite enquanto o Elasticsearch estiver fora; o buffer em disco segura.
+      retry_limit: false
+      # Teto do buffer em disco desta saída. Cheio, os registros mais antigos são descartados.
+      storage.total_limit_size: 500M

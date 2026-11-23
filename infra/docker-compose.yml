@@ -1,0 +1,168 @@
+# Stack de logs: Fluent Bit (coleta), Elasticsearch (armazenamento e busca) e Kibana (interface).
+# Incluído pelo docker-compose.yml da raiz, então faz parte do mesmo projeto e da mesma rede.
+# Todos os serviços estão no profile "logging": só sobem com make logging-up.
+# As variáveis ${...} vêm de infra/.env (o .env da pasta deste arquivo).
+
+# Limite de tamanho dos logs dos containers. Sem ele, o driver json-file cresce sem parar.
+# Cada container guarda no máximo 3 arquivos de 10 MB; o mais antigo é apagado na rotação.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  elasticsearch:
+    image: elasticsearch:9.5.5
+    profiles: [logging]
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      # Um nó só: dispensa a descoberta e a eleição de um cluster.
+      discovery.type: single-node
+      # Nome do cluster, exibido na API e no Kibana.
+      cluster.name: task-flow-logs
+      # Liga autenticação e autorização (usuários, papéis e permissões).
+      xpack.security.enabled: "true"
+      # Sem TLS na API HTTP. Aceitável só porque a porta fica em 127.0.0.1;
+      # numa aplicação real a comunicação com o cluster é sempre cifrada.
+      xpack.security.http.ssl.enabled: "false"
+      # Sem TLS entre nós. Só é permitido porque o cluster tem um nó (single-node).
+      xpack.security.transport.ssl.enabled: "false"
+      # Licença gratuita (basic). Inclui segurança, ILM, data streams e alertas do Kibana.
+      xpack.license.self_generated.type: basic
+      # Senha inicial do superusuário "elastic". O setup usa esse usuário para criar os demais.
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:?defina ELASTIC_PASSWORD em infra/.env}
+      # Heap da JVM. Mínimo e máximo iguais evitam pausas para redimensionar a memória.
+      # O Elasticsearch usa também a memória fora do heap (page cache do sistema) para os segmentos.
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+      # Desliga as marcas de disco cheio. Sem isso, com o disco do host acima de 90%,
+      # o Elasticsearch deixa os índices somente leitura e os logs param de entrar.
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    ulimits:
+      # Arquivos abertos: cada segmento do Lucene é um conjunto de arquivos.
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+      # Índices, segmentos e translog. Sobrevive a make logging-down; some com make logging-reset.
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      # API REST, para consultas com curl e para o Kibana.
+      - "127.0.0.1:${ELASTICSEARCH_PORT:-9200}:9200"
+    healthcheck:
+      # Saudável quando responde autenticado e o cluster está verde ou amarelo.
+      # $$ escapa o $ do compose: a variável é lida dentro do container.
+      test: ["CMD-SHELL", "curl -fs -u \"elastic:$$ELASTIC_PASSWORD\" 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # Roda uma vez e termina: cria usuários, papel do Fluent Bit, política de retenção e template.
+  elasticsearch-setup:
+    image: curlimages/curl:8.17.0
+    profiles: [logging]
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/setup/setup.sh"]
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      KIBANA_USER: ${KIBANA_USER:?defina KIBANA_USER em infra/.env}
+      KIBANA_USER_PASSWORD: ${KIBANA_USER_PASSWORD:?defina KIBANA_USER_PASSWORD em infra/.env}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:?defina KIBANA_SYSTEM_PASSWORD em infra/.env}
+      FLUENT_BIT_PASSWORD: ${FLUENT_BIT_PASSWORD:?defina FLUENT_BIT_PASSWORD em infra/.env}
+    volumes:
+      # Script e arquivos YAML (política e template), somente leitura.
+      - ./elasticsearch:/setup:ro
+
+  kibana:
+    image: kibana:9.5.5
+    profiles: [logging]
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      # O Kibana só sobe depois que o setup definiu a senha do kibana_system.
+      elasticsearch-setup:
+        condition: service_completed_successfully
+    environment:
+      # Endereço do Elasticsearch na rede do compose.
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+      # Usuário interno do Kibana. Ele não pode usar o "elastic" (o Kibana recusa superusuário).
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD}
+      # Chaves de criptografia. Sem a de saved objects, regras de alerta e conectores não funcionam.
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:?defina KIBANA_ENCRYPTION_KEY em infra/.env}
+      XPACK_SECURITY_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY}
+      XPACK_REPORTING_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY}
+      # Endereço que o navegador usa para abrir o Kibana (links e redirecionamentos).
+      SERVER_PUBLICBASEURL: http://127.0.0.1:${KIBANA_PORT:-5601}
+      # Permite consultar /api/status sem login, para o healthcheck.
+      STATUS_ALLOWANONYMOUS: "true"
+      # Não envia estatísticas de uso para a Elastic.
+      TELEMETRY_OPTIN: "false"
+      TELEMETRY_ALLOWCHANGINGOPTINSTATUS: "false"
+    ports:
+      # Interface web.
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    volumes:
+      # Estado local do Kibana (uuid da instância, cache de plugins).
+      - kibana-data:/usr/share/kibana/data
+    healthcheck:
+      # Saudável quando o status geral é "available" (todos os plugins prontos).
+      test: ["CMD-SHELL", "curl -fs http://localhost:5601/api/status | grep -q '\"level\":\"available\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  # Roda uma vez e termina: cria a data view no Kibana. Precisa do Kibana já de pé.
+  kibana-setup:
+    image: curlimages/curl:8.17.0
+    profiles: [logging]
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      kibana:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/setup/setup.sh"]
+    environment:
+      KIBANA_URL: http://kibana:5601
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+    volumes:
+      - ./kibana:/setup:ro
+
+  fluent-bit:
+    image: fluent/fluent-bit:5.2.0
+    profiles: [logging]
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      # Espera o usuário fluent-bit e o template existirem; antes disso, os envios falhariam
+      # e o primeiro documento criaria o data stream com mapeamento dinâmico.
+      elasticsearch-setup:
+        condition: service_completed_successfully
+    command: ["/fluent-bit/bin/fluent-bit", "-c", "/fluent-bit/etc/fluent-bit.yaml"]
+    environment:
+      # Lida no fluent-bit.yaml como ${FLUENT_BIT_PASSWORD}.
+      FLUENT_BIT_PASSWORD: ${FLUENT_BIT_PASSWORD}
+    volumes:
+      - ./fluent-bit/fluent-bit.yaml:/fluent-bit/etc/fluent-bit.yaml:ro
+      # Arquivos de log que o Docker grava para cada container (driver json-file).
+      # Somente leitura: o Fluent Bit só lê, quem rotaciona e apaga é o Docker.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Posição de leitura de cada arquivo e buffer em disco. Num restart, o Fluent Bit
+      # continua de onde parou e reenvia o que estava pendente.
+      - fluent-bit-state:/fluent-bit/state
+    ports:
+      # Métricas (/api/v2/metrics) e saúde (/api/v1/health) do próprio Fluent Bit.
+      - "127.0.0.1:${FLUENT_BIT_PORT:-2020}:2020"
+
+volumes:
+  elasticsearch-data:
+  kibana-data:
+  fluent-bit-state:

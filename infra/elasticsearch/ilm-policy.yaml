@@ -1,0 +1,29 @@
+# Política de ciclo de vida (ILM) dos índices de log.
+# Enviada pelo setup.sh com PUT /_ilm/policy/task-flow-logs. O Elasticsearch aceita o corpo em YAML.
+# Cada data stream tem índices de apoio (.ds-...); a política decide quando criar um novo e quando apagar.
+
+policy:
+  # Metadados livres, exibidos no Kibana em Stack Management, Index Lifecycle Policies.
+  _meta:
+    description: Logs da API task-flow, mantidos por 7 dias.
+
+  phases:
+    # Fase hot: o índice que recebe as escritas.
+    hot:
+      # Entra nesta fase assim que o índice é criado.
+      min_age: 0ms
+      actions:
+        # Rollover: fecha o índice atual para escrita e cria o próximo.
+        # Acontece no que vier primeiro: 1 dia de idade ou 1 GB no shard primário.
+        # Índices por dia deixam a retenção precisa (apagar 1 dia de cada vez).
+        rollover:
+          max_age: 1d
+          max_primary_shard_size: 1gb
+
+    # Fase delete: apaga o índice inteiro, o que é instantâneo
+    # (muito mais barato que apagar documentos um a um).
+    delete:
+      # Conta a partir do rollover: o índice é apagado 7 dias depois de parar de receber escritas.
+      min_age: 7d
+      actions:
+        delete: {}

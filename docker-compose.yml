@@ -1,4 +1,25 @@
+# Stack de logs (Elasticsearch, Kibana e Fluent Bit). Os serviços estão no profile "logging"
+# e só sobem com make logging-up. As variáveis do arquivo incluído vêm de infra/.env.
+include:
+  - infra/docker-compose.yml
+
+# Logs dos containers no driver padrão (json-file), com limite de tamanho e metadados.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    # Cada arquivo de log chega a no máximo 10 MB; então o Docker rotaciona.
+    max-size: "10m"
+    # Mantém 3 arquivos por container (30 MB no máximo) e apaga o mais antigo.
+    max-file: "3"
+    # Grava o nome do container em cada linha (campo attrs.tag), usado pelo Fluent Bit.
+    tag: "{{.Name}}"
+    # Grava o nome do serviço do compose em cada linha (attrs), usado pelo Fluent Bit
+    # para coletar só os logs da API.
+    labels: com.docker.compose.service
+
 x-backend: &backend
+  logging: *default-logging
+
   build:
     context: ./backend
     dockerfile: Dockerfile
@@ -32,6 +53,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
 
     environment:
       POSTGRES_USER: ${DB_USER}
@@ -53,6 +75,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
 
     ports:
       - "127.0.0.1:${REDIS_PORT}:6379"

@@ -1,0 +1,146 @@
+# Index template dos logs da API.
+# Enviado pelo setup.sh com PUT /_index_template/task-flow-logs. O Elasticsearch aceita o corpo em YAML.
+# Todo índice ou data stream criado com nome que case com index_patterns recebe estas
+# configurações e este mapeamento. Mudanças aqui valem só para os próximos índices (próximo rollover).
+
+# Nomes que usam o template. O Fluent Bit grava em logs-task-flow-local (logs-<dataset>-<namespace>).
+index_patterns:
+  - logs-task-flow-*
+
+# Prioridade sobre outros templates que casem com o mesmo nome. O Elasticsearch já vem com um
+# template "logs" (prioridade 100) para logs-*-*; com 500, este vence.
+priority: 500
+
+# Faz o nome virar um data stream: um nome lógico com índices de apoio (.ds-...) criados por rollover.
+# Data streams só aceitam inserção (op_type create) e exigem o campo @timestamp.
+data_stream: {}
+
+_meta:
+  description: Logs estruturados da API task-flow (pino).
+
+template:
+  settings:
+    # Um shard primário: o volume de um estudo local cabe folgado num shard só.
+    # Mais shards só ajudam com mais nós ou volumes muito grandes.
+    index.number_of_shards: 1
+    # Sem réplicas: com um nó, a réplica não teria onde ficar e o índice ficaria amarelo.
+    index.number_of_replicas: 0
+    # Política de ciclo de vida que faz o rollover diário e apaga após 7 dias (ilm-policy.yaml).
+    index.lifecycle.name: task-flow-logs
+    # Intervalo do refresh: de quanto em quanto tempo os documentos novos ficam pesquisáveis.
+    # 1 s é o padrão; aumentar reduz o custo de escrita em troca de busca menos imediata.
+    index.refresh_interval: 1s
+    # Valor com tipo errado (ex.: statusCode "abc") não rejeita o documento: o campo é ignorado
+    # na indexação, continua no _source e o nome dele vai para o campo _ignored.
+    index.mapping.ignore_malformed: true
+    # Limite de campos mapeados, proteção contra explosão de mapeamento.
+    index.mapping.total_fields.limit: 200
+
+  mappings:
+    # Campos que não estão listados abaixo não são indexados: ficam no _source (aparecem no
+    # documento), mas não servem para filtro nem agregação. Evita que um log com chaves
+    # dinâmicas crie milhares de campos. Para tornar um campo novo pesquisável, mapeie-o aqui.
+    dynamic: false
+
+    properties:
+      # Momento do evento, vindo do campo "time" do pino (o Fluent Bit converte).
+      "@timestamp":
+        type: date
+
+      # Mensagem principal. O "msg" do pino é renomeado para "message" (Elastic Common Schema).
+      # text: busca por palavra. Subcampo keyword: valor exato, para agregar e ordenar.
+      message:
+        type: text
+        fields:
+          keyword:
+            type: keyword
+            # Mensagens maiores que isso não entram no subcampo keyword (só na busca por texto).
+            ignore_above: 1024
+
+      # keyword: valor exato, sem análise. Ideal para filtro (=) e agregação (contagem por valor).
+      log:
+        properties:
+          # Nível do pino (info, warn, error...). Renomeado de "level".
+          level:
+            type: keyword
+          # stdout ou stderr, vindo do Docker.
+          stream:
+            type: keyword
+
+      container:
+        properties:
+          # Nome do container (logging-api-1), vindo da opção tag do driver json-file.
+          name:
+            type: keyword
+
+      # Campos fixos do pino (base em logger.config.ts).
+      service:
+        type: keyword
+      env:
+        type: keyword
+      # Classe que emitiu o log (LoginUseCase, RedisCacheProvider...).
+      context:
+        type: keyword
+
+      # Correlação da requisição (Fase 2).
+      requestId:
+        type: keyword
+      userId:
+        type: keyword
+      sessionId:
+        type: keyword
+
+      # Access log.
+      method:
+        type: keyword
+      # URL real. ignore_above evita indexar URLs enormes.
+      path:
+        type: keyword
+        ignore_above: 512
+      # Template da rota (/api/v1/boards/:id), o campo para agrupar por endpoint.
+      route:
+        type: keyword
+      # short: inteiro de 16 bits, suficiente para status HTTP. Numérico permite intervalos (>= 500).
+      statusCode:
+        type: short
+      # long: permite média, percentis e intervalos (durationMs > 1000).
+      durationMs:
+        type: long
+      errorMessage:
+        type: text
+        fields:
+          keyword:
+            type: keyword
+            ignore_above: 256
+
+      # Eventos de domínio (auth.login.failed...).
+      event:
+        type: keyword
+      reason:
+        type: keyword
+
+      # Logs do RedisCacheProvider.
+      key:
+        type: keyword
+        ignore_above: 256
+      prefix:
+        type: keyword
+        ignore_above: 256
+
+      # Erro serializado pelo pino (5xx e falhas de infraestrutura).
+      err:
+        properties:
+          type:
+            type: keyword
+          message:
+            type: text
+            fields:
+              keyword:
+                type: keyword
+                ignore_above: 1024
+          # Só busca por texto: stack trace nunca é agregado.
+          stack:
+            type: text
+          # Código do erro de sistema (ECONNREFUSED...).
+          code:
+            type: keyword
