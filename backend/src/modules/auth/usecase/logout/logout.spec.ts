@@ -28,7 +28,7 @@ describe('LogoutUseCase', () => {
     expect(sessionRepository.revoke).toHaveBeenCalledWith(USER_ID, 'session-1');
     expect(sessionRepository.revokeAll).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
-      { event: 'auth.logout', userId: USER_ID, sessionId: 'session-1' },
+      { event: 'auth.logout' },
       'logout',
     );
   });

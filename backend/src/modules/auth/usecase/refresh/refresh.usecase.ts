@@ -65,6 +65,17 @@ export class RefreshUseCase {
 
     await this.sessionRepository.save(rotated, env.JWT_REFRESH_TTL);
 
+    // Rota pública (sem AuthGuard), então userId e sessionId vão explícitos.
+    // Com o evento de sucesso, dá para comparar a taxa de falhas de refresh com o total.
+    this.logger.info(
+      {
+        event: 'auth.refresh.succeeded',
+        userId: rotated.userId,
+        sessionId: rotated.sessionId,
+      },
+      'refresh succeeded',
+    );
+
     return await this.tokenService.createTokens(rotated);
   }
 }

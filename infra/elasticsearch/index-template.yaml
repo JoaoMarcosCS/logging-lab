@@ -119,6 +119,29 @@ template:
       reason:
         type: keyword
 
+      # Ids das entidades nos eventos de boards e tasks. keyword: filtro exato e agregação.
+      boardId:
+        type: keyword
+      taskId:
+        type: keyword
+      # Nomes dos campos enviados numa alteração (ex.: ["title", "workStatus"]).
+      # Um array de keyword: o filtro changedFields : "email" acha os documentos que o contêm.
+      changedFields:
+        type: keyword
+      # Nomes dos enums de tarefa (CLOSED, HIGH), não os números do banco.
+      # previousWorkStatus e workStatus permitem contar transições de status.
+      workStatus:
+        type: keyword
+      previousWorkStatus:
+        type: keyword
+      priority:
+        type: keyword
+      # Leituras em debug: se a resposta veio do cache e quantos itens a página trouxe.
+      cacheHit:
+        type: boolean
+      resultCount:
+        type: integer
+
       # Logs do RedisCacheProvider.
       key:
         type: keyword

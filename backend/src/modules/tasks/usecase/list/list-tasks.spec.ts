@@ -1,9 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
+import type { PinoLogger } from 'nestjs-pino';
 import { ListTasksUseCase } from './list-tasks.usecase.js';
 import type { GetBoardUseCase } from '../../../boards/usecase/get/get-board.usecase.js';
 import type { ITaskRepository } from '../../repository/task-interface.repository.js';
 import type { ICacheProvider } from '../../../../infra/cache/cache-interface.provider.js';
 import {
+  mockLogger,
   BOARD_ID,
   makeBoard,
   makeTask,
@@ -11,7 +13,7 @@ import {
   mockTaskRepository,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
-import type { Mocked } from '../../../../tests/mocks/index.js';
+import type { Mocked, MockedLogger } from '../../../../tests/mocks/index.js';
 import {
   CACHE_TTL_SECONDS,
   cacheKeys,
@@ -27,16 +29,19 @@ describe('ListTasksUseCase', () => {
   let repository: Mocked<ITaskRepository>;
   let cache: Mocked<ICacheProvider>;
   let getBoard: { execute: ReturnType<typeof vi.fn> };
+  let logger: MockedLogger;
   let useCase: ListTasksUseCase;
 
   beforeEach(() => {
     repository = mockTaskRepository();
     cache = mockCacheProvider();
     getBoard = { execute: vi.fn().mockResolvedValue(makeBoard()) };
+    logger = mockLogger();
     useCase = new ListTasksUseCase(
       repository,
       getBoard as unknown as GetBoardUseCase,
       cache as unknown as ICacheProvider,
+      logger as unknown as PinoLogger,
     );
   });
 

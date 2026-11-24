@@ -1,12 +1,14 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import type { PinoLogger } from 'nestjs-pino';
 import { UpdateUserUseCase } from './update-user.usecase.js';
 import type { PublicUser } from '../../repository/user-interface.repository.js';
 import {
+  mockLogger,
   mockUserRepository,
   OTHER_USER_ID,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
-import type { Mocked } from '../../../../tests/mocks/index.js';
+import type { Mocked, MockedLogger } from '../../../../tests/mocks/index.js';
 import type { IUserRepository } from '../../repository/user-interface.repository.js';
 
 const user: PublicUser = {
@@ -19,11 +21,16 @@ const user: PublicUser = {
 
 describe('UpdateUserUseCase', () => {
   let repository: Mocked<IUserRepository>;
+  let logger: MockedLogger;
   let useCase: UpdateUserUseCase;
 
   beforeEach(() => {
     repository = mockUserRepository();
-    useCase = new UpdateUserUseCase(repository);
+    logger = mockLogger();
+    useCase = new UpdateUserUseCase(
+      repository,
+      logger as unknown as PinoLogger,
+    );
   });
 
   it('updates the name without checking the email', async () => {

@@ -1,32 +1,37 @@
 import { NotFoundException } from '@nestjs/common';
+import type { PinoLogger } from 'nestjs-pino';
 import { DeleteBoardUseCase } from './delete-board.usecase.js';
 import type { GetBoardUseCase } from '../get/get-board.usecase.js';
 import type { IBoardRepository } from '../../repository/board-interface.repository.js';
 import type { ICacheProvider } from '../../../../infra/cache/cache-interface.provider.js';
 import {
+  mockLogger,
   BOARD_ID,
   makeBoard,
   mockBoardRepository,
   mockCacheProvider,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
-import type { Mocked } from '../../../../tests/mocks/index.js';
+import type { Mocked, MockedLogger } from '../../../../tests/mocks/index.js';
 import { cacheKeys } from '../../../../shared/utils/cache-keys.js';
 
 describe('DeleteBoardUseCase', () => {
   let repository: Mocked<IBoardRepository>;
   let cache: Mocked<ICacheProvider>;
   let getBoard: { execute: ReturnType<typeof vi.fn> };
+  let logger: MockedLogger;
   let useCase: DeleteBoardUseCase;
 
   beforeEach(() => {
     repository = mockBoardRepository();
     cache = mockCacheProvider();
     getBoard = { execute: vi.fn().mockResolvedValue(makeBoard()) };
+    logger = mockLogger();
     useCase = new DeleteBoardUseCase(
       repository,
       getBoard as unknown as GetBoardUseCase,
       cache as unknown as ICacheProvider,
+      logger as unknown as PinoLogger,
     );
   });
 

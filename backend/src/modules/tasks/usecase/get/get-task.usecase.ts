@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { PinoLogger } from 'nestjs-pino';
 import { ITaskRepository } from '../../repository/task-interface.repository.js';
 import type { PublicTask } from '../../repository/task-interface.repository.js';
 import { GetBoardUseCase } from '../../../boards/usecase/get/get-board.usecase.js';
@@ -15,7 +16,11 @@ export class GetTaskUseCase {
     private readonly taskRepository: ITaskRepository,
     private readonly getBoardUseCase: GetBoardUseCase,
     private readonly cacheProvider: ICacheProvider,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    // Preenche o campo "context" de cada linha, para filtrar logs por classe.
+    this.logger.setContext(GetTaskUseCase.name);
+  }
 
   async execute(
     userId: string,
@@ -28,6 +33,8 @@ export class GetTaskUseCase {
     const cached = await this.cacheProvider.get<PublicTask>(key);
 
     if (cached) {
+      // Leitura: só em debug (LOG_LEVEL=debug). O access log já registra a requisição.
+      this.logger.debug({ boardId, taskId, cacheHit: true }, 'task loaded');
       return cached;
     }
 
@@ -40,6 +47,8 @@ export class GetTaskUseCase {
     }
 
     await this.cacheProvider.set(key, task, CACHE_TTL_SECONDS);
+
+    this.logger.debug({ boardId, taskId, cacheHit: false }, 'task loaded');
 
     return task;
   }

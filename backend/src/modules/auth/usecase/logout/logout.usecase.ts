@@ -16,9 +16,9 @@ export class LogoutUseCase {
   async execute(user: AuthenticatedUser): Promise<void> {
     await this.sessionRepository.revoke(user.id, user.sessionId);
 
-    this.logger.info(
-      { event: 'auth.logout', userId: user.id, sessionId: user.sessionId },
-      'logout',
-    );
+    // userId e sessionId não são repetidos: o AuthGuard já os colocou no contexto da requisição.
+    // Repetir gera a chave duas vezes na mesma linha JSON, que o Elasticsearch recusa
+    // (Duplicate field) quando recebe o documento sem passar por um coletor que a desfaça.
+    this.logger.info({ event: 'auth.logout' }, 'logout');
   }
 }

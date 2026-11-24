@@ -1,9 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
+import type { PinoLogger } from 'nestjs-pino';
 import { DeleteTaskUseCase } from './delete-task.usecase.js';
 import type { GetTaskUseCase } from '../get/get-task.usecase.js';
 import type { ITaskRepository } from '../../repository/task-interface.repository.js';
 import type { ICacheProvider } from '../../../../infra/cache/cache-interface.provider.js';
 import {
+  mockLogger,
   BOARD_ID,
   makeTask,
   mockCacheProvider,
@@ -11,23 +13,26 @@ import {
   TASK_ID,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
-import type { Mocked } from '../../../../tests/mocks/index.js';
+import type { Mocked, MockedLogger } from '../../../../tests/mocks/index.js';
 import { cacheKeys } from '../../../../shared/utils/cache-keys.js';
 
 describe('DeleteTaskUseCase', () => {
   let repository: Mocked<ITaskRepository>;
   let cache: Mocked<ICacheProvider>;
   let getTask: { execute: ReturnType<typeof vi.fn> };
+  let logger: MockedLogger;
   let useCase: DeleteTaskUseCase;
 
   beforeEach(() => {
     repository = mockTaskRepository();
     cache = mockCacheProvider();
     getTask = { execute: vi.fn().mockResolvedValue(makeTask()) };
+    logger = mockLogger();
     useCase = new DeleteTaskUseCase(
       repository,
       getTask as unknown as GetTaskUseCase,
       cache as unknown as ICacheProvider,
+      logger as unknown as PinoLogger,
     );
   });
 

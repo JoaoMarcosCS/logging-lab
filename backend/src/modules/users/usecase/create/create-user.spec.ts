@@ -1,4 +1,7 @@
 import type { Mock } from 'vitest';
+import type { PinoLogger } from 'nestjs-pino';
+import { mockLogger } from '../../../../tests/mocks/index.js';
+import type { MockedLogger } from '../../../../tests/mocks/index.js';
 import { ConflictException } from '@nestjs/common';
 import type { IUserRepository } from '../../repository/user-interface.repository.js';
 import type { PublicUser } from '../../repository/user-interface.repository.js';
@@ -15,6 +18,7 @@ const user: PublicUser = {
 
 describe('CreateUserUseCase', () => {
   let repository: { [K in keyof IUserRepository]: Mock<IUserRepository[K]> };
+  let logger: MockedLogger;
   let useCase: CreateUserUseCase;
 
   beforeEach(() => {
@@ -24,7 +28,11 @@ describe('CreateUserUseCase', () => {
       findWithPasswordBy: vi.fn(),
       update: vi.fn(),
     };
-    useCase = new CreateUserUseCase(repository);
+    logger = mockLogger();
+    useCase = new CreateUserUseCase(
+      repository,
+      logger as unknown as PinoLogger,
+    );
   });
 
   it('creates a user with a hashed password', async () => {

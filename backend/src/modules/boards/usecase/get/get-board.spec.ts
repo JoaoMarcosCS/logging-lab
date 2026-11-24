@@ -1,8 +1,10 @@
 import { NotFoundException } from '@nestjs/common';
+import type { PinoLogger } from 'nestjs-pino';
 import { GetBoardUseCase } from './get-board.usecase.js';
 import type { IBoardRepository } from '../../repository/board-interface.repository.js';
 import type { ICacheProvider } from '../../../../infra/cache/cache-interface.provider.js';
 import {
+  mockLogger,
   BOARD_ID,
   makeBoard,
   mockBoardRepository,
@@ -10,7 +12,7 @@ import {
   OTHER_USER_ID,
   USER_ID,
 } from '../../../../tests/mocks/index.js';
-import type { Mocked } from '../../../../tests/mocks/index.js';
+import type { Mocked, MockedLogger } from '../../../../tests/mocks/index.js';
 import {
   CACHE_TTL_SECONDS,
   cacheKeys,
@@ -19,14 +21,17 @@ import {
 describe('GetBoardUseCase', () => {
   let repository: Mocked<IBoardRepository>;
   let cache: Mocked<ICacheProvider>;
+  let logger: MockedLogger;
   let useCase: GetBoardUseCase;
 
   beforeEach(() => {
     repository = mockBoardRepository();
     cache = mockCacheProvider();
+    logger = mockLogger();
     useCase = new GetBoardUseCase(
       repository,
       cache as unknown as ICacheProvider,
+      logger as unknown as PinoLogger,
     );
   });
 
@@ -60,6 +65,10 @@ describe('GetBoardUseCase', () => {
     await expect(useCase.execute(USER_ID, BOARD_ID)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+    expect(logger.warn).toHaveBeenCalledWith(
+      { event: 'board.access_denied', boardId: BOARD_ID },
+      'board access denied',
+    );
   });
 
   it('throws NotFoundException when the board does not exist or was deleted', async () => {
@@ -69,5 +78,6 @@ describe('GetBoardUseCase', () => {
       NotFoundException,
     );
     expect(cache.set).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });
