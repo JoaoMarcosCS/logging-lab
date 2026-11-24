@@ -136,6 +136,88 @@ Makefile                   fluxos do dia a dia
 docs/logging.md            guia de estudo completo
 ```
 
+## E se fosse para produção?
+
+Nesse repo tudo roda numa máquina só. Em produção, a aplicação e a stack de logs ficariam em servidores separados:
+
+```
+servidor da aplicação                         servidor de logs
+┌──────────────────────────────┐              ┌──────────────────────────────┐
+│ API (container)              │              │ Elasticsearch                │
+│   | stdout                   │              │   guarda e indexa os logs    │
+│   v                          │    HTTPS     │                              │
+│ arquivos json-file do Docker │              │ Kibana                       │
+│   |                          │              │   interface para consultar   │
+│   v                          │              │                              │
+│ Fluent Bit ──────────────────┼─────────────>│                              │
+└──────────────────────────────┘              └──────────────────────────────┘
+```
+
+### No servidor da aplicação
+
+A API roda num servidor próprio, e o Fluent Bit roda nesse mesmo servidor. Ele lê os arquivos de log que o Docker grava no disco local, então precisa estar na máquina onde os containers rodam. Com mais de um servidor de aplicação, cada um tem o seu Fluent Bit.
+
+No `infra/fluent-bit/fluent-bit.yaml`, só a saída muda, para apontar para o servidor do Elasticsearch:
+
+```yaml
+outputs:
+  - name: es
+    match: docker.*
+    # Endereço do servidor de logs, em vez do nome "elasticsearch" da rede do compose.
+    host: logs.seudominio.com.br
+    port: 9200
+    # Os logs passam pela rede: a conexão precisa ser cifrada e o certificado, verificado.
+    tls: on
+    tls.verify: on
+    http_user: fluent-bit
+    http_passwd: ${FLUENT_BIT_PASSWORD}
+    # Namespace do ambiente: os logs de produção ficam num data stream próprio.
+    index: logs-task-flow-production
+    write_operation: create
+    suppress_type_name: on
+    retry_limit: false
+```
+
+O resto do pipeline (leitura dos arquivos, filtros e buffer em disco) continua igual. O `docker-compose.yml` do servidor da aplicação mantém a rotação dos logs e passa a ter só a API e o Fluent Bit.
+
+### No servidor de logs
+
+O Elasticsearch e o Kibana rodam juntos no servidor de logs:
+
+- O Elasticsearch com TLS ligado e a porta 9200 aberta no firewall só para os IPs dos servidores da aplicação.
+- O Kibana atrás de HTTPS, que é o endereço que você abre no navegador para consultar os logs.
+- O `elasticsearch-setup` e o `kibana-setup` rodam ali, com a mesma configuração de `infra/`. A política de retenção passa a seguir a regra do negócio (por exemplo, 30 dias), e não os 7 dias do estudo.
+
+### Consultando no Kibana
+
+Depois de entrar no Kibana, as consultas do dia a dia ficam no menu Analytics, Discover.
+
+1. Seguir uma requisição que um usuário reportou. Discover, linguagem KQL (o padrão):
+
+   ```
+   requestId : "4f2c1a9e-7b3d-4e8a-9c1f-2d6b8e0a5f3c"
+   ```
+
+   Mostra, em ordem, todos os logs daquela requisição: o que o usecase registrou e a linha do access log com status e duração. O `requestId` vem no header `X-Request-Id` da resposta.
+
+2. Erros do servidor nas últimas horas. Discover, KQL, com o período ajustado no seletor de tempo do canto superior direito:
+
+   ```
+   statusCode >= 500
+   ```
+
+   Abra um documento para ver `err.type`, `err.message` e `err.stack`.
+
+3. Rotas mais lentas. Discover, trocando o modo de busca para ES|QL pelo botão no topo da tela:
+
+   ```
+   FROM logs-task-flow-* | WHERE durationMs IS NOT NULL | STATS p95 = PERCENTILE(durationMs, 95), total = COUNT(*) BY route | SORT p95 DESC | LIMIT 10
+   ```
+
+   Devolve uma tabela com as 10 rotas de maior p95 de latência.
+
+Mais consultas e o que cada área do Kibana faz estão em [docs/logging.md](docs/logging.md).
+
 ## A aplicação base
 
 O domínio é um gerenciador de tarefas pessoal: cada usuário organiza as próprias tarefas em boards que só ele enxerga.
