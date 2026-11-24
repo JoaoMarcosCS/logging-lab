@@ -1,71 +1,148 @@
-# Task Flow Base
+# Estudo de logging estruturado
 
-Projeto base para estudos. Ele entrega um sistema completo e funcionando (API, frontend, banco, cache, autenticação e dados de exemplo) para servir de ponto de partida a outros projetos, sem precisar montar tudo do zero a cada novo estudo.
+Projeto de estudo de logging estruturado e de ferramentas de coleta, armazenamento e busca de logs. Roda só localmente, com Docker, e não vai para produção.
 
-A ideia é clonar esta base e evoluir em cima dela.
+A aplicação usada como cobaia é o task-flow-base: uma API NestJS de gerenciamento de tarefas, com frontend Next.js, Postgres e Redis. A base foi copiada e desvinculada do repositório original para que o estudo pudesse mudar o que fosse preciso.
 
-Tudo o que está aqui pode ser modificado: módulos, regras de negócio, estrutura do banco e entidades. A base existe para poupar o trabalho repetitivo, não para limitar o que vem depois.
+## Objetivo
 
-## O que já vem pronto
+Entender, na prática, como uma aplicação real deve registrar e entregar logs:
 
-O domínio é um gerenciador de tarefas pessoal: cada usuário organiza as próprias tarefas em boards que só ele enxerga. O glossário completo está em [CONTEXT.md](CONTEXT.md).
+- o que registrar, em qual formato e com quais campos;
+- como correlacionar todos os logs de uma mesma requisição;
+- como os logs saem do container e chegam a uma ferramenta de busca, sem a aplicação depender dela;
+- como guardar, pesquisar, agregar e apagar logs;
+- como cada peça funciona por dentro (coletor, Elasticsearch, Kibana).
 
-Backend (`backend/`):
+O estudo é só do backend. O frontend continua no projeto apenas para gerar tráfego.
 
-- NestJS com ESM, TypeORM e PostgreSQL;
-- autenticação com JWT em cookies httpOnly, sessões no Redis, rotação do refresh token e detecção de reuso (decisão registrada em [docs/adr/0001-sessoes-jwt-no-redis.md](docs/adr/0001-sessoes-jwt-no-redis.md));
-- módulos de usuários, boards e tarefas, com um use case por pasta (controller, schema, usecase e teste);
-- validação com zod, rate limit com `@nestjs/throttler`, CORS restrito e versionamento de rotas (`/api/v1`);
-- cache no Redis com invalidação por prefixo;
-- paginação por cursor e ids UUIDv7;
-- exclusão lógica: excluir um board exclui as tarefas dele na mesma transação;
-- testes unitários com Vitest e testes de integração com testcontainers;
-- seed com um usuário principal, 200 usuários extras, boards e tarefas variados, incluindo um board com 5000 tarefas.
+## Fluxo
 
-Frontend (`frontend/`):
+```
+API (NestJS + pino)
+  | uma linha JSON por evento no stdout
+  v
+Docker (driver json-file, com rotação 3 x 10 MB)
+  | grava em /var/lib/docker/containers/<id>/<id>-json.log
+  v
+Fluent Bit
+  | lê os arquivos, fica só com o serviço "api", transforma o JSON em campos
+  v
+Elasticsearch
+  | data stream logs-task-flow-local, mapeamento explícito, retenção de 7 dias
+  v
+Kibana
+  | busca (Discover), gráficos (Lens), dashboards e alertas
+```
 
-- Next.js com React, TanStack Query, Zustand, react-hook-form, zod e Tailwind;
-- telas de login, cadastro, boards, quadro de tarefas com arrastar e soltar, e perfil.
+A API não sabe que o Elasticsearch existe: ela só escreve no stdout. Trocar a ferramenta de busca, ou desligar a coleta, não exige mudar nem fazer deploy da API.
 
-Infraestrutura (raiz):
+## Fases
 
-- `docker-compose.yml` com PostgreSQL, Redis, serviço de migrations e a API;
-- `Makefile` com os fluxos do dia a dia;
-- hooks do husky: lint e formatação no pre-commit, testes no pre-push.
+O estudo avança uma fase por vez.
 
-## Estrutura do banco
+| Fase | Entrega |
+| --- | --- |
+| 1. Logger JSON | pino no lugar do logger padrão do Nest; JSON no container, texto colorido (pino-pretty) no terminal; nível e formato por variável de ambiente |
+| 2. Contexto da requisição | `requestId` em todos os logs de uma requisição; `userId` e `sessionId` nas rotas autenticadas; uma linha de access log por requisição; eventos de autenticação; dados sensíveis mascarados |
+| 3. Coleta e busca | Fluent Bit, Elasticsearch e Kibana em Docker, com configuração versionada em `infra/` |
 
-| Tabela | Colunas principais | Relação |
+O que está em cada fase, campo a campo, está em [docs/logging.md](docs/logging.md).
+
+## Decisões
+
+### Na aplicação
+
+| Decisão | Escolha | Motivo |
 | --- | --- | --- |
-| `users` | `id`, `name`, `email`, `password`, `status` (ativo ou inativo) | dono de zero ou mais boards |
-| `boards` | `id`, `user_id`, `title`, `description`, `is_active` | pertence a um usuário, contém zero ou mais tarefas |
-| `tasks` | `id`, `board_id`, `title`, `description`, `priority`, `work_status`, `is_active` | pertence a exatamente um board |
+| Biblioteca de log | pino, via `nestjs-pino` | JSON nativo, um dos loggers mais rápidos do Node, integração com o Nest e contexto por requisição (AsyncLocalStorage) |
+| Destino | stdout | a aplicação não conhece o backend de logs; falhas de rede, retry e buffer ficam com o coletor |
+| Mensagens | texto constante (`login failed`), com o que varia em campos | permite contar e agrupar por mensagem |
+| Correlação | `requestId`, aceitando o header `X-Request-Id` de quem chamou e devolvendo-o na resposta | basta para seguir uma requisição; tracing (OpenTelemetry) ficou para depois |
+| Access log | uma linha por requisição, com `route`, `statusCode` e `durationMs`; nível pelo status (5xx error, 4xx warn) | um registro por requisição, fácil de filtrar e agregar |
+| Erros | 5xx com `err` completo (tipo, mensagem, stack); 4xx só com `errorMessage` | erro do servidor precisa de stack; erro do cliente não |
+| Dados sensíveis | `redact` do pino para senhas, tokens, cookies e `authorization` | rede de segurança caso algum desses campos chegue a um log |
+| Health check | fora do access log | é chamado a cada poucos segundos e só geraria ruído |
 
-Todas as tabelas têm `created_at` e `updated_at`. A tarefa não tem dono próprio: o dono dela é o dono do board.
+### Na infraestrutura
+
+| Decisão | Escolha | Motivo |
+| --- | --- | --- |
+| Coletor | Fluent Bit | leve (escrito em C), padrão em Kubernetes, saída nativa para o Elasticsearch, buffer em disco |
+| Forma de coleta | leitura dos arquivos `json-file` do Docker | nenhum serviço muda de driver, `docker logs` continua funcionando e, se o coletor cair, os logs esperam nos arquivos; é o mesmo modelo do Kubernetes |
+| Armazenamento e busca | Elasticsearch, com Kibana como interface | o estudo começou pensando no Graylog, que guarda os logs num motor de busca da família do Elasticsearch (OpenSearch); aqui o motor é estudado diretamente, com busca por texto, agregações e ES\|QL |
+| Estrutura dos dados | data stream com política ILM (rollover diário, exclusão após 7 dias) | logs só recebem inserção e expiram por idade; apagar um índice inteiro é instantâneo |
+| Mapeamento | explícito no index template, com `dynamic: false` e `ignore_malformed` | tipos certos para filtros e agregações; um log com campo inesperado ou tipo errado não cria campos nem é recusado |
+| Segurança | autenticação ligada, sem TLS; o Fluent Bit usa um usuário que só pode inserir | mostra o princípio do menor privilégio; TLS foi deixado de fora para simplificar, com as portas publicadas só em `127.0.0.1` |
+| Rotação dos logs dos containers | `max-size: 10m` e `max-file: 3` em todos os serviços | sem limite, o `json-file` cresce até encher o disco |
+| Organização | pasta `infra/` incluída no `docker-compose.yml` da raiz, no profile `logging` | um projeto compose só, sem misturar com a API; `make api` continua subindo só a aplicação |
+| Configuração | arquivos YAML comentados, aplicados por containers de setup | tudo versionado e reproduzível; o Elasticsearch aceita corpo em YAML, o que permite comentar cada propriedade |
+
+As alternativas consideradas e as explicações de cada conceito (índice invertido, segmentos, shards, ILM, KQL) estão em [docs/logging.md](docs/logging.md).
 
 ## Como rodar
 
-Requisitos: Docker, Node na versão do `.nvmrc` (via nvm) e pnpm (via corepack).
+Requisitos: Docker, Node na versão do `backend/.nvmrc` (via nvm) e pnpm (via corepack). A stack de logs usa cerca de 3 GB de RAM.
 
-1. Crie o `backend/.env` com as variáveis validadas em `backend/src/shared/environment/env.ts`: `API_PORT`, `NODE_VERSION`, `ENVIRONMENT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`, `REDIS_HOST`, `REDIS_PORT`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_ACCESS_TTL` e `JWT_REFRESH_TTL`.
-2. Instale as dependências do backend com `cd backend && pnpm install`.
-3. Na raiz, rode `make dev` para subir tudo e abrir o frontend, ou `make up` para subir só a API e acompanhar os logs.
+1. Crie o `backend/.env` com as variáveis validadas em `backend/src/shared/environment/env.ts`.
+2. Instale as dependências do backend: `cd backend && pnpm install`.
+3. Na raiz:
 
-O `make up` sobe Postgres e Redis, aplica as migrations, sobe a API e roda o seed. O `make dev` faz o mesmo e depois inicia o frontend em `http://localhost:5173`, criando o `frontend/.env.local` a partir do `.env.example` se ele não existir.
+```bash
+make up           # Postgres, Redis, migrations, API e seed
+make logging-up   # Elasticsearch, Kibana e Fluent Bit
+```
 
-Usuário de demonstração criado pelo seed: `teste@gmail.com`, senha `#Demo2026`.
+O `make logging-up` cria o `infra/.env` a partir do `infra/.env.example` se ele não existir. Na primeira vez leva de 1 a 2 minutos.
 
-Outros comandos:
+| Serviço | Endereço | Acesso |
+| --- | --- | --- |
+| API | http://127.0.0.1:3000/api/v1 | |
+| Frontend (`make front`) | http://localhost:5173 | `teste@gmail.com`, senha `#Demo2026` |
+| Kibana | http://127.0.0.1:5601 | `teste`, senha `#Demo2026` |
+| Elasticsearch | http://127.0.0.1:9200 | os mesmos usuários |
+| Fluent Bit (métricas) | http://127.0.0.1:2020/api/v1/metrics | sem login |
+
+No Kibana, abra Discover e busque, por exemplo, `requestId : "teste-123"` depois de uma requisição com o header `X-Request-Id: teste-123`.
+
+### Comandos
 
 | Comando | O que faz |
 | --- | --- |
-| `make infra` | sobe Postgres e Redis |
-| `make migrate` | aplica as migrations pendentes |
-| `make seed` | aplica as migrations e roda o seed (não faz nada se o usuário principal já existir) |
-| `make migration-generate name=Nome` | gera uma migration a partir das entidades |
-| `make migration-revert` | reverte a última migration |
-| `make db-reset` | apaga os volumes e recria o banco com o seed |
-| `make down` | derruba os containers |
+| `make up` | sobe a aplicação, aplica as migrations, roda o seed e acompanha os logs da API |
+| `make dev` | o mesmo, e inicia o frontend |
+| `make logs` | acompanha os logs da API no terminal |
+| `make logging-up` | sobe a stack de logs e reaplica a configuração |
+| `make logging-down` | para a stack de logs e mantém os dados |
+| `make logging-reset` | para a stack de logs e apaga todos os logs guardados |
+| `make logging-logs` | acompanha os logs do Fluent Bit |
+| `make down` | para tudo |
+| `make db-reset` | recria o banco com o seed |
+
+## Estrutura
+
+```
+backend/
+  src/infra/logger/        configuração do pino e do access log
+  src/infra/http/filters/  filtro de exceções (erros no access log)
+infra/
+  docker-compose.yml       Elasticsearch, Kibana, Fluent Bit e containers de setup
+  .env.example             senhas e portas
+  fluent-bit/              pipeline do coletor
+  elasticsearch/           usuários, papel, política ILM e index template
+  kibana/                  data view
+docker-compose.yml         aplicação, rotação de logs e include do infra/
+Makefile                   fluxos do dia a dia
+docs/logging.md            guia de estudo completo
+```
+
+## A aplicação base
+
+O domínio é um gerenciador de tarefas pessoal: cada usuário organiza as próprias tarefas em boards que só ele enxerga.
+
+- Backend: NestJS com ESM, TypeORM, Postgres, autenticação com JWT em cookies e sessões no Redis, cache no Redis, testes com Vitest e testcontainers.
+- Frontend: Next.js com React, TanStack Query e Tailwind.
+- Seed: usuário `teste@gmail.com`, 200 usuários extras, boards e tarefas, incluindo um board com 5000 tarefas.
 
 Testes, dentro de `backend/`:
 
@@ -74,11 +151,10 @@ pnpm test
 pnpm test:integration
 ```
 
-Os testes de integração precisam do Docker rodando.
-
 ## Documentação
 
-- [CONTEXT.md](CONTEXT.md): glossário do domínio e relações entre as entidades.
-- [docs/api-frontend.md](docs/api-frontend.md): contrato da API (rotas, tipos, autenticação, refresh, rate limit e CORS).
-- [docs/adr/](docs/adr/): decisões de arquitetura.
-- [CLAUDE.md](CLAUDE.md): convenções de código do backend (estrutura de módulos, repositories, schemas e testes).
+- [docs/logging.md](docs/logging.md): guia de estudo da stack de logs (uso, funcionamento interno, consultas, exercícios e perguntas frequentes).
+- [CONTEXT.md](CONTEXT.md): glossário do domínio.
+- [docs/api-frontend.md](docs/api-frontend.md): contrato da API.
+- [docs/adr/](docs/adr/): decisões de arquitetura da aplicação base.
+- [CLAUDE.md](CLAUDE.md): convenções de código do backend.
