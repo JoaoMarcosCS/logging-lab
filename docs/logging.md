@@ -8,13 +8,14 @@ Guia de estudo da stack de logs deste projeto. Cobre como subir e usar, como cad
 2. [Como subir](#como-subir)
 3. [Arquivos](#arquivos)
 4. [O que a API registra](#o-que-a-api-registra)
-5. [Fluent Bit](#fluent-bit)
-6. [Elasticsearch](#elasticsearch)
-7. [Kibana](#kibana)
-8. [Consultas](#consultas)
-9. [Exercícios](#exercícios)
-10. [Perguntas frequentes](#perguntas-frequentes)
-11. [Solução de problemas](#solução-de-problemas)
+5. [Logs no Docker](#logs-no-docker)
+6. [Fluent Bit](#fluent-bit)
+7. [Elasticsearch](#elasticsearch)
+8. [Kibana](#kibana)
+9. [Consultas](#consultas)
+10. [Exercícios](#exercícios)
+11. [Perguntas frequentes](#perguntas-frequentes)
+12. [Solução de problemas](#solução-de-problemas)
 
 ## Arquitetura
 
@@ -107,17 +108,6 @@ curl -u 'fluent-bit:#Demo2026' -X DELETE http://127.0.0.1:9200/logs-task-flow-lo
 # 403
 ```
 
-### Rotação dos logs dos containers
-
-Sem configuração, o driver `json-file` do Docker grava os logs sem limite. Numa API com tráfego, o arquivo cresce até encher o disco. Todos os serviços (API, Postgres, Redis, migrations e a própria stack de logs) usam:
-
-```yaml
-max-size: "10m"   # rotaciona ao chegar em 10 MB
-max-file: "3"     # mantém 3 arquivos, no máximo 30 MB por container
-```
-
-O Fluent Bit acompanha a rotação: continua lendo o arquivo antigo por 30 s (`rotate_wait`) e passa para o novo.
-
 ## O que a API registra
 
 Implementado nas fases 1 e 2 (`backend/src/infra/logger/`):
@@ -156,6 +146,138 @@ Exemplo real de um login com senha errada, como fica guardado no Elasticsearch:
 }
 ```
 
+### Para onde o pino escreve
+
+Nenhuma linha da configuração diz "stdout". O pino recebe dois argumentos, `pino(opções, destino)`, e quando o destino não é passado usa `pino.destination(1)`. O 1 é o descritor de arquivo do stdout no Linux (0 é o stdin, 2 é o stderr). Em `backend/src/infra/logger/logger.module.ts`, o `pinoHttp` recebe só as opções, então vale o padrão. No modo `LOG_FORMAT=pretty`, o pino-pretty também escreve no stdout.
+
+O pino não separa por nível: `level: error` também vai para o stdout. Só aparece algo no stderr quando o Node escreve sem passar pelo pino, como um crash antes do logger subir. Por isso o filtro Lua do Fluent Bit usa o `stream` apenas para dar um nível a linhas que não são JSON.
+
+Para deixar o destino explícito, o `pinoHttp` aceita um array `[opções, destino]`:
+
+```ts
+import { destination } from 'pino';
+
+pinoHttp: [
+  { ...loggerConfig, redact: ..., genReqId: ... },
+  // Descritor 1 = stdout. sync: false acumula as escritas num buffer, mais rápido.
+  destination({ dest: 1, sync: false }),
+],
+```
+
+O pino não aceita `transport` junto com um destino, então o modo pretty precisaria de um condicional. Por isso o projeto mantém o padrão.
+
+## Logs no Docker
+
+### Onde ficam
+
+Sem nenhuma configuração, o Docker usa o driver `json-file`: tudo o que o container escreve no stdout e no stderr vai para um arquivo em disco, não para a memória:
+
+```
+/var/lib/docker/containers/<id do container>/<id do container>-json.log
+```
+
+Isso é automático. Para ver o driver padrão da máquina:
+
+```bash
+docker info --format '{{.LoggingDriver}}'
+```
+
+No `json-file`, `max-size` e `max-file` não têm limite por padrão. O arquivo cresce até o container ser removido ou o disco encher. O caso clássico é uma VPS com um container de pé há meses e dezenas de GB de log.
+
+O arquivo pertence ao container, não à imagem nem à aplicação:
+
+| Ação | O arquivo de log |
+| --- | --- |
+| `docker restart`, `docker stop` e `start` | continua e segue crescendo |
+| `docker compose up -d` sem nenhuma mudança | continua; nada é recriado |
+| `docker compose up -d` com imagem, compose ou `.env` diferentes | apagado; o container é recriado com outro id |
+| `docker compose down`, `docker rm` | apagado |
+
+A memória só entra se o driver estiver em `mode: non-blocking`: aí o Docker usa um buffer pequeno (`max-buffer-size`, 1 MB por padrão) para não travar a aplicação quando o disco está lento, e descarta linhas se ele encher.
+
+### Rotação
+
+Rotacionar é trocar de arquivo quando ele fica grande. Todos os serviços deste projeto (API, Postgres, Redis, migrations e a própria stack de logs) usam, pelo bloco `x-logging` do `docker-compose.yml` da raiz e pelo `infra/docker-compose.yml`:
+
+```yaml
+max-size: "10m"   # quando trocar de arquivo
+max-file: "3"     # quantos arquivos manter, contando o atual
+```
+
+Quando o arquivo atual chega a 10 MB:
+
+```
+antes                          depois
+<id>-json.log    (10 MB)       <id>-json.log    (novo, vazio, recebe as escritas)
+<id>-json.log.1  (10 MB)       <id>-json.log.1  (era o atual)
+<id>-json.log.2  (10 MB)       <id>-json.log.2  (era o .1)
+                               o antigo .2 é apagado
+```
+
+O `max-file` não é um arquivo a mais: é o total. Com 3, são 1 sendo escrito e 2 antigos, no máximo 30 MB por container.
+
+Com `max-file: 1` (o padrão), não há para onde rotacionar: ao chegar em 10 MB, o Docker esvazia o arquivo e recomeça. Isso tem dois efeitos:
+
+1. O histórico some de uma vez. Logo depois, `docker logs` mostra só as poucas linhas escritas desde então.
+2. Linhas que o Fluent Bit ainda não leu se perdem. Com `max-file` maior que 1, o arquivo cheio é renomeado em vez de esvaziado, e o Fluent Bit continua lendo o antigo por 30 s (`rotate_wait`) até terminar.
+
+Os arquivos locais são só uma folga. Quem guarda o histórico é o Elasticsearch, com 7 dias de retenção.
+
+### Não armazenar
+
+O driver `none` não grava nada:
+
+```yaml
+logging:
+  driver: none
+```
+
+O `docker logs` fica vazio e o Fluent Bit não recebe nada, porque não há arquivo. Só faz sentido se os logs forem para outro lugar.
+
+Os drivers que enviam direto (`fluentd`, `gelf`, `syslog`) mantêm por padrão uma cópia local para o `docker logs` funcionar (dual logging, 20 MB x 5). Para desligar a cópia, use `cache-disabled: "true"` nas opções.
+
+| Driver | Comportamento | Funciona com o Fluent Bit deste projeto? |
+| --- | --- | --- |
+| `json-file` sem limites (padrão) | cresce sem limite | sim, mas enche o disco |
+| `json-file` com `max-size` e `max-file` | rotação | sim (o que usamos) |
+| `local` | binário comprimido, rotação de 20 MB x 5 por padrão; o recomendado pela documentação do Docker | não; o formato não é texto JSON |
+| `none` | não grava | não |
+
+### Padrão da máquina
+
+Em vez de repetir a configuração em cada compose, dá para definir o padrão do Docker em `/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+```
+
+- Exige reiniciar o daemon (`sudo systemctl restart docker`).
+- Vale só para containers criados depois.
+- Os valores são strings (`"3"`, não `3`).
+- O `logging` do compose tem prioridade sobre esse padrão.
+
+Numa VPS, costuma ser uma das primeiras configurações, porque protege até os containers que alguém esquecer de configurar.
+
+### Deploy
+
+A maioria dos deploys recria o container: imagem nova, `docker compose up -d`, id novo, pasta nova. O arquivo do container antigo é apagado junto com ele. No blue/green, o container antigo vive até a troca e o log dele some quando ele é removido.
+
+Por isso o arquivo do Docker é uma fila de passagem, não o armazenamento. Neste projeto:
+
+- O que o Fluent Bit já enviou continua no Kibana depois do deploy.
+- `docker logs api` mostra só o que o container novo escreveu.
+- O Fluent Bit acha o arquivo novo em até 5 s (`refresh_interval`) e o lê desde o começo (`read_from_head`), então o boot da versão nova não se perde.
+
+A perda acontece com o que o Fluent Bit ainda não leu quando o container antigo é removido. Com o Fluent Bit de pé, o atraso é de cerca de 1 s e a perda é rara. Com o Fluent Bit parado durante o deploy, o que o container antigo escreveu e não foi lido se perde de vez: o buffer e o `tail.db` protegem o que já foi lido, e o arquivo de origem deixou de existir.
+
+Numa aplicação real:
+
+1. O coletor fica fora do ciclo de deploy da aplicação. É infraestrutura da máquina e não reinicia quando a API muda.
+2. Espera-se alguns segundos entre parar o container antigo e removê-lo, para o coletor terminar de ler.
+
 ## Fluent Bit
 
 Arquivo: `infra/fluent-bit/fluent-bit.yaml`.
@@ -177,6 +299,25 @@ Este projeto usa a leitura de arquivos:
 - se o Fluent Bit cair, os logs continuam nos arquivos e são lidos quando ele voltar;
 - é o mesmo modelo do Kubernetes, em que um Fluent Bit por nó (DaemonSet) lê `/var/log/containers`.
 
+### Onde está a ligação com a API
+
+Nenhuma configuração aponta para o container da API. O Fluent Bit lê os arquivos de todos os containers da máquina e descarta o que não é da API. A ligação está em três lugares:
+
+| Arquivo | Configuração | Papel |
+| --- | --- | --- |
+| `docker-compose.yml` (raiz), bloco `x-logging` | `driver: json-file`, `tag`, `labels` | o Docker grava o stdout da API em arquivo, com o nome do container e do serviço em cada linha |
+| `infra/docker-compose.yml`, serviço `fluent-bit` | volume `/var/lib/docker/containers:/var/lib/docker/containers:ro` | os arquivos do host ficam visíveis, só para leitura, dentro do container do Fluent Bit |
+| `infra/fluent-bit/fluent-bit.yaml`, `pipeline.inputs` | `name: tail`, `path: /var/lib/docker/containers/*/*-json.log` | lê os arquivos de todos os containers |
+| `infra/fluent-bit/fluent-bit.yaml`, primeiro filtro | `grep` com `$attrs['com.docker.compose.service'] ^api$` | fica só com as linhas do serviço `api` |
+
+```
+pino escreve no stdout
+  -> Docker grava em /var/lib/docker/containers/<id>/<id>-json.log   (x-logging)
+  -> volume deixa o arquivo visível ao Fluent Bit                   (serviço fluent-bit)
+  -> tail lê o arquivo                                             (pipeline.inputs)
+  -> grep descarta o que não é da API                              (pipeline.filters)
+```
+
 ### Pipeline
 
 ```
@@ -195,6 +336,80 @@ Cada linha do arquivo do Docker tem este formato:
 ```
 
 O JSON do pino está dentro do campo `log`, como texto. O `attrs` existe porque o `docker-compose.yml` configura as opções `tag` (nome do container) e `labels` (serviço do compose) no driver `json-file`.
+
+### Leitura, buffer e envio
+
+Duas propriedades controlam o tempo, e é comum confundi-las:
+
+| Propriedade | O que controla |
+| --- | --- |
+| `pipeline.inputs[].refresh_interval: 5` | de quanto em quanto tempo o Fluent Bit procura arquivos novos que casem com o `path`, como o de um container recém-criado |
+| `service.flush: 1` | de quanto em quanto tempo o que está no buffer é enviado às saídas |
+
+O `refresh_interval` não define de quanto em quanto tempo os arquivos são lidos. Num arquivo já acompanhado, a leitura é imediata: o Fluent Bit usa o inotify do Linux, o kernel avisa quando o arquivo recebe uma escrita, e ele lê na hora.
+
+O estado do Fluent Bit fica em dois lugares diferentes, ambos no volume `fluent-bit-state`:
+
+| Onde | Configuração | O que guarda |
+| --- | --- | --- |
+| `/fluent-bit/state/tail.db` (SQLite) | `pipeline.inputs[].db` | só a posição de leitura de cada arquivo: nome, offset em bytes e inode |
+| `/fluent-bit/state/buffer/` | `service.storage.path` e `storage.type: filesystem` | os registros já processados, em arquivos `.flb` (chunks), até o Elasticsearch confirmar |
+
+O SQLite não guarda conteúdo de log. Uma linha dele é algo como:
+
+```
+id | name                                               | offset | inode
+2  | /var/lib/docker/containers/828f82c2441f69e1dc...   | 845803 | 9635387
+```
+
+O caminho de um log dentro do Fluent Bit:
+
+```
+1. API escreve no arquivo do Docker
+2. inotify avisa e o tail lê a linha
+   tail.db atualiza o offset ("li até o byte 845803")
+3. filtros rodam na hora: grep, parser, lua, modify
+4. o registro processado vai para um chunk (memória + buffer/ em disco)
+5. a cada flush (1 s): chunks viram um POST /_bulk
+6. Elasticsearch confirma: o chunk é apagado do buffer
+   Elasticsearch fora: o chunk fica, e há nova tentativa depois
+```
+
+O offset avança assim que a linha é lida, não quando ela chega ao Elasticsearch. Por isso os dois mecanismos se complementam: num restart, o `tail.db` evita ler de novo o que já foi lido, e o buffer guarda o que foi lido mas ainda não foi entregue. Com `storage.type: memory`, um restart com o Elasticsearch fora perderia exatamente essas linhas.
+
+### Envio ao Elasticsearch
+
+Configuração em `pipeline.outputs` do `fluent-bit.yaml`:
+
+| Propriedade | Papel |
+| --- | --- |
+| `name: es` | plugin de saída para o Elasticsearch |
+| `match: docker.*` | recebe os registros que passaram pelos filtros |
+| `host: elasticsearch`, `port: 9200` | endereço; o nome é resolvido pelo DNS da rede do compose |
+| `http_user`, `http_passwd` | HTTP Basic com o usuário `fluent-bit` |
+| `index: logs-task-flow-local` | data stream de destino |
+| `write_operation: create` | a operação de cada documento; data streams só aceitam `create` |
+| `compress: gzip` | comprime o corpo da requisição |
+| `retry_limit: false` | reenvia até conseguir |
+| `trace_error: on` | mostra no log do Fluent Bit o motivo de cada documento recusado |
+
+A cada flush, o Fluent Bit faz uma única requisição à API `_bulk`, e não uma por log:
+
+```
+POST http://elasticsearch:9200/_bulk
+Authorization: Basic (fluent-bit:#Demo2026)
+Content-Encoding: gzip
+Content-Type: application/x-ndjson
+
+{"create":{"_index":"logs-task-flow-local"}}
+{"@timestamp":"2026-11-23T16:25:22.096Z","log.level":"warn","message":"login failed","requestId":"teste-123",...}
+{"create":{"_index":"logs-task-flow-local"}}
+{"@timestamp":"2026-11-23T16:25:22.101Z","log.level":"warn","message":"request completed","statusCode":401,...}
+```
+
+São pares de linhas: a ação com o destino, e o documento já transformado. O `@timestamp` é acrescentado pelo plugin `es` a partir do timestamp do registro, que o parser `pino_json` tirou do `time` do pino.
+
+O Elasticsearch responde com um status por documento. No lado dele, o nome `logs-task-flow-local` casa com o padrão `logs-task-flow-*` do index template; na primeira escrita, isso cria o data stream com o mapeamento explícito.
 
 ### Garantias de entrega
 
@@ -554,6 +769,30 @@ O que vale acrescentar numa aplicação real:
 - Um campo com a versão ou a cor (`version`, `deployment: green`) nos campos fixos do pino. Sem ele, não dá para comparar a taxa de erro da versão nova com a da antiga, que é o que decide se a troca continua.
 - Um tempo de espera antes de remover o container antigo. O arquivo de log some junto com o container; se o Fluent Bit não tiver terminado de ler, as últimas linhas se perdem.
 - Com vários servidores, um Fluent Bit por servidor. No Kubernetes, ele roda como DaemonSet e o filtro `kubernetes` acrescenta os labels do pod.
+
+### E se a API rodar numa VPS?
+
+O Fluent Bit precisa rodar na mesma máquina, porque lê arquivos locais. É o modelo de agente: um coletor por servidor. Com 3 VPS, são 3 Fluent Bits; no Kubernetes, o DaemonSet faz isso, um por nó.
+
+O Elasticsearch e o Kibana não precisam ficar na VPS e normalmente não ficam:
+
+```
+VPS (API + Fluent Bit)  --HTTPS-->  servidor de logs (Elasticsearch + Kibana)
+```
+
+Na VPS, muda só a saída:
+
+```yaml
+host: logs.seudominio.com   # em vez do nome "elasticsearch" da rede do compose
+port: 443
+tls: on                     # os logs vão trafegar pela internet
+tls.verify: on
+```
+
+- Com a API em Docker, o Fluent Bit é o mesmo container, com o mesmo volume.
+- Sem Docker (pm2, systemd), o Fluent Bit é instalado como pacote do sistema e lê os arquivos do pm2, ou usa o input `systemd` para ler o journald.
+
+Existe a alternativa de não ter coletor na VPS, usando o logging driver `fluentd` do Docker para enviar a um Fluent Bit remoto. Não é recomendável: se a rede ou o coletor cair, o Docker bloqueia a escrita do container ou descarta logs, e perde-se o buffer em disco e a posição de leitura que o agente local oferece.
 
 ### O que é `jq`?
 

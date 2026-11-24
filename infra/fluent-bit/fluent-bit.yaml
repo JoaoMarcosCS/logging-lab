@@ -40,7 +40,7 @@ pipeline:
     # Lê arquivos como um "tail -f", lembrando a posição de cada um.
     - name: tail
       # Um arquivo por container: /var/lib/docker/containers/<id>/<id>-json.log.
-      # O curinga pega containers novos sozinho (inclusive a versão nova num blue/green).
+      # O curinga pega containers novos sozinho
       path: /var/lib/docker/containers/*/*-json.log
       # Tag de roteamento. O * vira o caminho do arquivo; filtros e saídas usam match "docker.*".
       tag: docker.*
